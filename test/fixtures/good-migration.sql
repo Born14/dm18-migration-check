@@ -1,0 +1,2 @@
+-- ADD COLUMN NOT NULL with DEFAULT — DM-18 should NOT fire.
+ALTER TABLE "users" ADD COLUMN "company" TEXT NOT NULL DEFAULT '';

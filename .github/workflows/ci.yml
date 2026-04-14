@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build
+      - run: bun test/smoke.test.ts
+      - name: Verify dist/ is committed and up to date
+        run: |
+          if ! git diff --quiet dist/; then
+            echo "dist/ is out of sync with the current source. Run 'npm run build' and commit the result." >&2
+            git --no-pager diff dist/
+            exit 1
+          fi

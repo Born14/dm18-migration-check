@@ -1,0 +1,20 @@
+{
+  "name": "dm18-migration-check",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub Action: catch NOT NULL migrations without safe preconditions. 100% precision on 761 public migrations.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --external:fs --external:path --external:os --external:child_process --external:zlib --external:url --external:crypto && cp node_modules/libpg-query/wasm/libpg-query.wasm dist/libpg-query.wasm",
+    "smoke": "bun test/smoke.test.ts"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  },
+  "dependencies": {
+    "libpg-query": "^17.7.3"
+  }
+}

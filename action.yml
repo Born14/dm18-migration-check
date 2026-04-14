@@ -1,0 +1,22 @@
+name: 'DM-18 Migration Safety Check'
+description: '100% precision on 761 public migrations. Catches NOT NULL migrations that fail on non-empty tables.'
+author: 'Born14'
+branding:
+  icon: 'shield'
+  color: 'blue'
+inputs:
+  token:
+    description: 'GitHub token with pull-requests: write and contents: read'
+    required: false
+    default: ${{ github.token }}
+  fail-on:
+    description: 'Severity level that causes the check to fail (error | warning | none)'
+    required: false
+    default: 'error'
+  comment:
+    description: 'Post a comment on the PR when findings fire (true | false)'
+    required: false
+    default: 'true'
+runs:
+  using: 'node20'
+  main: 'dist/index.cjs'
