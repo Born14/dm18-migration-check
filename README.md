@@ -1,6 +1,10 @@
-# DM-18 Migration Safety Check
+# dm18-migration-check
 
-**A GitHub Action that catches one specific dangerous database migration pattern before it merges, with measured precision on 761 real production migrations.**
+**Most migration linters tell you what they catch. Almost none tell you how often they're right.**
+
+**DM-18 precision: 19 true positives, 0 false positives on 761 public Postgres migrations.** One rule. Reproducible. The [methodology](https://github.com/Born14/verify/blob/main/scripts/mvp-migration/MEASURED-CLAIMS.md) is published and the corpus is public — clone it, run the replay, get the same number yourself.
+
+This GitHub Action runs that one rule against the SQL migration files in your pull request and posts a comment that leads with the precision claim when a finding fires. When no finding fires, a short all-clear confirms the tool ran. No configuration required.
 
 ---
 
@@ -32,11 +36,11 @@ When no findings fire, the comment is a short all-clear acknowledging that the t
 
 ## The calibration claim
 
-**DM-18 precision: 100% (19 true positives / 0 false positives) on a public corpus of 761 production migrations.**
+**DM-18 precision: 19 true positives, 0 false positives on a public corpus of 761 production migrations.**
 
 The corpus is the April 2026 snapshot of cal.com, formbricks, and supabase migration histories. The measurement and methodology are published at [Born14/verify's MEASURED-CLAIMS.md](https://github.com/Born14/verify/blob/main/scripts/mvp-migration/MEASURED-CLAIMS.md). The 761-migration corpus is fully reproducible: clone [Born14/verify](https://github.com/Born14/verify), run `bun scripts/mvp-migration/replay-engine.ts`, and verify the 19/0 count yourself.
 
-This action is a thin distribution shell around verify's calibrated DM-18 rule. Verify is the source of the rule and the calibration discipline; this repo is the user-facing package.
+The rule itself is maintained in [Born14/verify](https://github.com/Born14/verify), the research project this action ships out of. Verify holds the calibration discipline, the corpus, and the registry of every shape that has and hasn't cleared the bar. This repo is the way to install DM-18 specifically, on its own, as a merge gate.
 
 ## What this catches
 
