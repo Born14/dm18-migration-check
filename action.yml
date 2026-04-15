@@ -1,5 +1,5 @@
 name: 'DM-18 Migration Safety Check'
-description: '100% precision on 761 public migrations. Catches NOT NULL migrations that fail on non-empty tables.'
+description: 'The migration check that publishes its precision: 19 true positives, 0 false positives on 761 public Postgres migrations. One rule. Reproducible.'
 author: 'Born14'
 branding:
   icon: 'shield'
