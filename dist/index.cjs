@@ -11,6 +11,10 @@ var __esm = (fn, res) => function __init() {
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -27,6 +31,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/@pgsql/types/types.js
 var require_types = __commonJS({
@@ -4227,6 +4232,14 @@ var init_safety_gate = __esm({
   }
 });
 
+// src/index.ts
+var index_exports = {};
+__export(index_exports, {
+  applyDm18Filter: () => applyDm18Filter,
+  isAcked: () => isAcked
+});
+module.exports = __toCommonJS(index_exports);
+
 // verify/src/action/migration-check.ts
 function detectMigrationFiles(changedFiles) {
   const patterns = [
@@ -4420,17 +4433,27 @@ async function runDm18OnGroups(groups) {
   const filesChecked = [];
   for (const group of groups) {
     const schema = createEmptySchema();
+    let priorIdx = 0;
     for (const priorSql of group.priorMigrationsSql) {
+      priorIdx++;
       try {
         applyMigrationSQL(schema, priorSql);
-      } catch {
+      } catch (err) {
+        console.log(
+          `::warning::Schema bootstrap incomplete in ${group.root}: prior migration ${priorIdx}/${group.priorMigrationsSql.length} failed to apply (${err?.message ?? "unknown error"}). Findings on this group may be incomplete.`
+        );
       }
     }
     for (const file of group.newFiles) {
       filesChecked.push(file.path);
       try {
         const spec = parseMigration(file.sql, file.path);
-        if (spec.meta.parseErrors.length > 0) continue;
+        if (spec.meta.parseErrors.length > 0) {
+          console.log(
+            `::warning::Could not parse ${file.path}: ${spec.meta.parseErrors[0]}. Skipping this file \u2014 DM-18 not checked here.`
+          );
+          continue;
+        }
         const grounding = runGroundingGate(spec, schema);
         const safety = runSafetyGate(spec, schema);
         for (const f of [...grounding, ...safety]) {
@@ -4438,13 +4461,27 @@ async function runDm18OnGroups(groups) {
         }
         try {
           applyMigrationSQL(schema, file.sql);
-        } catch {
+        } catch (err) {
+          console.log(
+            `::warning::Schema state could not advance after ${file.path} (${err?.message ?? "unknown error"}). Subsequent files in this group may produce incomplete findings.`
+          );
         }
-      } catch {
+      } catch (err) {
+        console.log(
+          `::warning::Failed to check ${file.path}: ${err?.message ?? "unknown error"}. DM-18 not checked here.`
+        );
       }
     }
   }
   return { findings, filesChecked };
+}
+function isAcked(f) {
+  return f.message.includes("[ACKED]");
+}
+function applyDm18Filter(taggedFindings) {
+  const dm18Raw = taggedFindings.filter((f) => f.shapeId === "DM-18");
+  const visible = dm18Raw.filter((f) => !isAcked(f));
+  return { visible, ackedCount: dm18Raw.length - visible.length };
 }
 function env(name, fallback = "") {
   return process.env[name] ?? fallback;
@@ -4463,7 +4500,7 @@ function migrationRoot(p) {
 async function run() {
   const token = env("GITHUB_TOKEN") || env("INPUT_TOKEN") || "";
   const commentEnabled = boolEnv("INPUT_COMMENT", true);
-  const failOn = (env("INPUT_FAIL_ON") || env("INPUT_FAIL-ON") || "error").toLowerCase();
+  const failOn = (env("INPUT_FAIL_ON") || "error").toLowerCase();
   const eventPath = env("GITHUB_EVENT_PATH");
   if (!eventPath) {
     console.log("::error::Not running in GitHub Actions context (GITHUB_EVENT_PATH not set)");
@@ -4564,8 +4601,10 @@ async function run() {
     if (err.stack) console.log(err.stack);
     process.exit(1);
   }
-  const dm18 = taggedFindings.filter((f) => f.shapeId === "DM-18");
-  console.log(`dm18-migration-check: ${dm18.length} DM-18 finding(s) after filter`);
+  const { visible: dm18, ackedCount } = applyDm18Filter(taggedFindings);
+  console.log(
+    `dm18-migration-check: ${dm18.length} DM-18 finding(s) after filter` + (ackedCount > 0 ? ` (${ackedCount} suppressed by ack comment)` : "")
+  );
   if (commentEnabled) {
     const body = formatDm18Comment(dm18, migrationPaths);
     if (body) {
@@ -4592,8 +4631,15 @@ async function run() {
   }
   process.exit(0);
 }
-run().catch((err) => {
-  console.log(`::error::Unhandled: ${err?.message ?? err}`);
-  if (err?.stack) console.log(err.stack);
-  process.exit(1);
+if (!process.env.DM18_SUPPRESS_AUTORUN) {
+  run().catch((err) => {
+    console.log(`::error::Unhandled: ${err?.message ?? err}`);
+    if (err?.stack) console.log(err.stack);
+    process.exit(1);
+  });
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  applyDm18Filter,
+  isAcked
 });

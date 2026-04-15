@@ -4,11 +4,19 @@
 
 ---
 
-## The incident this tool would have caught
+## The shape this tool catches
 
-On April 4, 2024, the cal.com team shipped a migration that added a `guestCompany` column to the `AIPhoneCallConfiguration` table as `TEXT NOT NULL`. The migration succeeded on dev and staging — both tables were empty there — but the moment any production write tried to create a row without providing a `guestCompany`, it failed. Twenty-four hours later they shipped a second migration reverting the constraint: `ALTER COLUMN "guestCompany" DROP NOT NULL`. Both migrations are public in the cal.com repo.
+On April 4, 2024 (commit timestamp `20240404092234`), the cal.com team merged a migration that added a `guestCompany` column to the `AIPhoneCallConfiguration` table as `TEXT NOT NULL`. The migration file [`20240404092234_add_guest_company_and_email/migration.sql`](https://github.com/calcom/cal.com/blob/main/packages/prisma/migrations/20240404092234_add_guest_company_and_email/migration.sql) literally carried a Prisma-generated warning at the top:
 
-The original migration is a textbook instance of a pattern that has a name in migration-safety tooling: **adding or setting NOT NULL on a column that is not provably safe against an already-populated table**. The DM-18 rule catches exactly that pattern.
+> ```
+> Warnings:
+>
+>   - Added the required column `guestCompany` to the `AIPhoneCallConfiguration` table without a default value. This is not possible if the table is not empty.
+> ```
+
+Roughly twenty-four hours later, the team shipped [`20240405142908_make_guest_company_and_email_optional/migration.sql`](https://github.com/calcom/cal.com/blob/main/packages/prisma/migrations/20240405142908_make_guest_company_and_email_optional/migration.sql) reverting the constraint: `ALTER COLUMN "guestCompany" DROP NOT NULL`. Both migrations are public in the cal.com repo and the commit pair is the only evidence cited here — no third-party postmortem is invoked.
+
+The shape is general: **adding or setting NOT NULL on a column that is not provably safe against an already-populated table**. The DM-18 rule catches exactly that shape, and the cal.com pair is one of 19 instances of it in the public 761-migration corpus this tool is calibrated against.
 
 ## What this action does
 
@@ -74,6 +82,8 @@ jobs:
 
 That is the full install. No configuration is required for the happy path. The action reads `GITHUB_TOKEN` from `github.token` automatically.
 
+`@v1` is a moving major tag that always points at the latest 1.x release. If you want an immutable reference, pin to `@v1.0.0` (or a later patch) instead. Both forms are supported per the standard GitHub Actions tagging convention.
+
 ### Optional inputs
 
 - **`fail-on`** — severity level that causes the check to fail. One of `error` (default), `warning`, or `none`. DM-18 is an error-severity rule; set this to `none` if you want the action to report findings without failing the check.
@@ -98,14 +108,16 @@ When DM-18 fires, the PR comment looks like this:
 
 ## How to suppress an intentional finding
 
-If a specific migration legitimately runs against a known-empty table and DM-18 is a false alarm for that case, suppress it with an inline SQL comment:
+If a specific migration legitimately runs against a known-empty table and DM-18 is the wrong call for that case, acknowledge the risk with an inline SQL comment:
 
 ```sql
 -- verify: ack DM-18 migration runs against empty staging table on new environments only
 ALTER TABLE stage_jobs ADD COLUMN worker_id UUID NOT NULL;
 ```
 
-The ack comment is parsed at check time and matches by shape ID. The suppression applies only to that migration file; it does not disable DM-18 globally.
+When this action sees an `-- verify: ack DM-18 <reason>` comment in the same migration file as a DM-18 finding, the finding is suppressed from the PR comment and does not fail the check. The acknowledgement is logged in the Action output (so a reviewer scanning the run can see the rule fired and was acked) but does not appear in the user-visible finding list. The suppression matches by shape ID and applies only to that migration file; it does not disable DM-18 globally.
+
+The ack comment is the explicit place where you record *why* this migration is safe even though it pattern-matches DM-18. Future readers of the migration file see the reason at the same place they see the risky SQL.
 
 ## FAQ
 

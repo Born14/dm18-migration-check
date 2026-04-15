@@ -30,7 +30,7 @@ import { loadModule } from 'libpg-query';
 import type { MigrationFinding, Schema } from '../verify/src/types-migration.js';
 import { formatDm18Comment } from './dm18-comment.js';
 
-type TaggedFinding = MigrationFinding & { file: string };
+export type TaggedFinding = MigrationFinding & { file: string };
 
 /**
  * Thin re-implementation of verify's per-file check loop. Upstream's
@@ -53,12 +53,22 @@ async function runDm18OnGroups(groups: MigrationGroup[]): Promise<{
 
   for (const group of groups) {
     // Bootstrap schema from prior migrations in this root.
+    // If a prior migration fails to parse or apply, the resulting schema is
+    // partial and any finding (or missed finding) on subsequent files is no
+    // longer backed by the calibration corpus. Surface a warning so the
+    // reviewer can see the run degraded instead of silently trusting it.
     const schema: Schema = createEmptySchema();
+    let priorIdx = 0;
     for (const priorSql of group.priorMigrationsSql) {
+      priorIdx++;
       try {
         applyMigrationSQL(schema, priorSql);
-      } catch {
-        /* bootstrap errors are recoverable — continue with whatever we have */
+      } catch (err: any) {
+        console.log(
+          `::warning::Schema bootstrap incomplete in ${group.root}: prior migration ` +
+            `${priorIdx}/${group.priorMigrationsSql.length} failed to apply ` +
+            `(${err?.message ?? 'unknown error'}). Findings on this group may be incomplete.`,
+        );
       }
     }
 
@@ -67,7 +77,13 @@ async function runDm18OnGroups(groups: MigrationGroup[]): Promise<{
       filesChecked.push(file.path);
       try {
         const spec = parseMigration(file.sql, file.path);
-        if (spec.meta.parseErrors.length > 0) continue;
+        if (spec.meta.parseErrors.length > 0) {
+          console.log(
+            `::warning::Could not parse ${file.path}: ${spec.meta.parseErrors[0]}. ` +
+              `Skipping this file — DM-18 not checked here.`,
+          );
+          continue;
+        }
         const grounding = runGroundingGate(spec, schema);
         const safety = runSafetyGate(spec, schema);
         for (const f of [...grounding, ...safety]) {
@@ -75,16 +91,59 @@ async function runDm18OnGroups(groups: MigrationGroup[]): Promise<{
         }
         try {
           applyMigrationSQL(schema, file.sql);
-        } catch {
-          /* advance errors do not block later files */
+        } catch (err: any) {
+          console.log(
+            `::warning::Schema state could not advance after ${file.path} ` +
+              `(${err?.message ?? 'unknown error'}). Subsequent files in this group ` +
+              `may produce incomplete findings.`,
+          );
         }
-      } catch {
-        /* skip unparseable file */
+      } catch (err: any) {
+        console.log(
+          `::warning::Failed to check ${file.path}: ${err?.message ?? 'unknown error'}. ` +
+            `DM-18 not checked here.`,
+        );
       }
     }
   }
 
   return { findings, filesChecked };
+}
+
+/**
+ * Returns true if a finding has been suppressed by an in-file ack comment.
+ *
+ * Upstream verify (safety-gate.ts) does not delete acked findings — it
+ * downgrades them to severity 'warning' and appends '[ACKED]' to the message.
+ * The dm18-migration-check user contract is "ack suppresses the finding from
+ * the PR comment and the merge gate," which means we filter on the [ACKED]
+ * tag at this layer rather than asking upstream to change semantics.
+ *
+ * If upstream's ack format ever changes, this function is the single place
+ * that needs to update.
+ */
+export function isAcked(f: MigrationFinding): boolean {
+  return f.message.includes('[ACKED]');
+}
+
+/**
+ * Apply the dm18-migration-check user-visible filter to a raw findings list.
+ *
+ * The user contract is:
+ *   1. Only DM-18 findings appear in the PR comment.
+ *   2. Findings suppressed by an `-- verify: ack DM-18 <reason>` comment
+ *      are dropped from the comment and do not gate the merge.
+ *
+ * Both the runtime and the smoke test go through this function so the
+ * action's user-visible behavior is tested by the same code path that
+ * produces it.
+ */
+export function applyDm18Filter(
+  taggedFindings: TaggedFinding[],
+): { visible: TaggedFinding[]; ackedCount: number } {
+  const dm18Raw = taggedFindings.filter((f) => f.shapeId === 'DM-18');
+  const visible = dm18Raw.filter((f) => !isAcked(f));
+  return { visible, ackedCount: dm18Raw.length - visible.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +180,10 @@ async function run(): Promise<void> {
   const token =
     env('GITHUB_TOKEN') || env('INPUT_TOKEN') || '';
   const commentEnabled = boolEnv('INPUT_COMMENT', true);
-  const failOn = (env('INPUT_FAIL_ON') || env('INPUT_FAIL-ON') || 'error').toLowerCase();
+  // GitHub Actions converts input names to env vars by uppercasing and
+  // replacing `-` with `_`, so `fail-on` becomes `INPUT_FAIL_ON`. Only
+  // that form is read; do not add hyphenated fallbacks.
+  const failOn = (env('INPUT_FAIL_ON') || 'error').toLowerCase();
 
   const eventPath = env('GITHUB_EVENT_PATH');
   if (!eventPath) {
@@ -251,9 +313,12 @@ async function run(): Promise<void> {
     process.exit(1);
   }
 
-  // ── Phase 3: post-filter to DM-18 only ──────────────────────────────────
-  const dm18: TaggedFinding[] = taggedFindings.filter((f) => f.shapeId === 'DM-18');
-  console.log(`dm18-migration-check: ${dm18.length} DM-18 finding(s) after filter`);
+  // ── Phase 3: post-filter to DM-18 only, then drop ack-suppressed ────────
+  const { visible: dm18, ackedCount } = applyDm18Filter(taggedFindings);
+  console.log(
+    `dm18-migration-check: ${dm18.length} DM-18 finding(s) after filter` +
+      (ackedCount > 0 ? ` (${ackedCount} suppressed by ack comment)` : ''),
+  );
 
   // ── Phase 4: post comment ───────────────────────────────────────────────
   if (commentEnabled) {
@@ -285,8 +350,19 @@ async function run(): Promise<void> {
   process.exit(0);
 }
 
-run().catch((err) => {
-  console.log(`::error::Unhandled: ${err?.message ?? err}`);
-  if (err?.stack) console.log(err.stack);
-  process.exit(1);
-});
+// Auto-run on import. The bundled dist/index.cjs is loaded by the GitHub
+// Actions runner and runs main() at import time — that is the action's
+// entire entry point.
+//
+// The smoke test imports this file too, but only to reach the exported
+// helpers (applyDm18Filter, isAcked, TaggedFinding). To prevent main() from
+// firing during the test import, the test sets DM18_SUPPRESS_AUTORUN via
+// the bun:test --env-file mechanism BEFORE bun resolves the module graph.
+// In the action runtime the env var is unset and the auto-run fires.
+if (!process.env.DM18_SUPPRESS_AUTORUN) {
+  run().catch((err) => {
+    console.log(`::error::Unhandled: ${err?.message ?? err}`);
+    if (err?.stack) console.log(err.stack);
+    process.exit(1);
+  });
+}

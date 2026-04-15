@@ -13,7 +13,6 @@
  *   - Suppression instructions in a <details> fold, not inline.
  *   - Stay under 15 visible lines when collapsed.
  */
-import type { MigrationCheckResult } from '../verify/src/action/migration-check.js';
 import type { MigrationFinding } from '../verify/src/types-migration.js';
 
 const METHODOLOGY_URL =

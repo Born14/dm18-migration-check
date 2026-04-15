@@ -18,7 +18,7 @@ jobs:
           node-version: '20'
       - run: npm install
       - run: npm run build
-      - run: bun test/smoke.test.ts
+      - run: bun test test/smoke.test.ts
       - name: Verify dist/ is committed and up to date
         run: |
           if ! git diff --quiet dist/; then

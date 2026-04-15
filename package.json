@@ -7,10 +7,10 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --external:fs --external:path --external:os --external:child_process --external:zlib --external:url --external:crypto && cp node_modules/libpg-query/wasm/libpg-query.wasm dist/libpg-query.wasm",
-    "smoke": "bun test/smoke.test.ts"
+    "smoke": "bun test test/smoke.test.ts"
   },
   "devDependencies": {
-    "esbuild": "^0.28.0",
+    "esbuild": "~0.28.0",
     "typescript": "^5.5.0",
     "@types/node": "^20.14.0"
   },
